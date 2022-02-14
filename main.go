@@ -14,12 +14,13 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	cli "github.com/urfave/cli/v2"
 
-	"github.com/cfunkhouser/promobee/promobee"
+	"github.com/dewski/promobee/promobee"
 )
 
 const (
-	authURLTemplate = `https://api.ecobee.com/authorize?response_type=ecobeePin&scope=smartWrite&client_id=%v`
-	tokenURL        = "https://api.ecobee.com/token"
+	authURLTemplate         = `https://api.ecobee.com/authorize?response_type=ecobeePin&scope=smartWrite&client_id=%v`
+	refreshTokenURLTemplate = `https://api.ecobee.com/token?grant_type=refresh_token&refresh_token=%v&client_id=%v&ecobee_type=jwt`
+	tokenURL                = "https://api.ecobee.com/token"
 )
 
 var (
@@ -80,6 +81,12 @@ func main() {
 				Description: "Registers Promobee application with Ecobee account",
 				Action:      doRegister,
 			},
+			{
+				Name:        "refresh",
+				Usage:       "Refresh Promobee application access token",
+				Description: "Refreshes Promobee application access token",
+				Action:      doRefresh,
+			},
 		},
 	}
 
@@ -110,6 +117,19 @@ func doServeMetrics(c *cli.Context) error {
 		return cli.Exit(fmt.Errorf("failed initializing store %q: %v", storePath, err), 1)
 	}
 
+	if ts.ValidFor() < 0 {
+		fmt.Printf("Need to refresh token at %v\n", storePath)
+		if err := doRefresh(c); err != nil {
+			return cli.Exit(fmt.Errorf("failed refreshing expired token %q: %v", storePath, err), 1)
+		}
+
+		ts, err = egobee.NewPersistentTokenFromDisk(storePath)
+		if err != nil {
+			return cli.Exit(fmt.Errorf("failed initializing store %q: %v", storePath, err), 1)
+		}
+		fmt.Printf("Refreshed token, valid for %v\n", ts.ValidFor())
+	}
+
 	apiKey := c.String("api_key")
 	if apiKey == "" {
 		cli.ShowAppHelpAndExit(c, 1)
@@ -125,6 +145,38 @@ func doServeMetrics(c *cli.Context) error {
 
 	log.Printf("Starting on %v", hostPort)
 	return http.ListenAndServe(hostPort, nil)
+}
+
+func doRefresh(c *cli.Context) error {
+	storePath := c.String("store")
+	if storePath == "" {
+		cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
+	}
+	apiKey := c.String("api_key")
+	if apiKey == "" {
+		cli.ShowCommandHelpAndExit(c, c.Command.Name, 1)
+	}
+	ts, err := egobee.NewPersistentTokenFromDisk(storePath)
+	if err != nil {
+		return cli.Exit(fmt.Errorf("failed initializing store %q: %v", storePath, err), 1)
+	}
+
+	resp, err := http.Post(fmt.Sprintf(refreshTokenURLTemplate, ts.RefreshToken(), apiKey), "application/json", nil)
+	if err != nil {
+		return cli.Exit(fmt.Errorf("failed initializing Pin Authentication: %v", err), 1)
+	}
+	defer resp.Body.Close()
+
+	trr := &egobee.TokenRefreshResponse{}
+	if err := json.NewDecoder(resp.Body).Decode(trr); err != nil {
+		return cli.Exit(fmt.Errorf("failed decoding refresh token response: %v", err), 1)
+	}
+	if _, err = egobee.NewPersistentTokenStore(trr, storePath); err != nil {
+		return cli.Exit(fmt.Errorf("failed creating persistent store: %v", err), 1)
+	}
+	fmt.Printf("Refreshed token at %v\n", storePath)
+
+	return nil
 }
 
 func doRegister(c *cli.Context) error {

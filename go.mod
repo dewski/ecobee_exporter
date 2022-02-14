@@ -1,4 +1,4 @@
-module github.com/cfunkhouser/promobee
+module github.com/dewski/promobee
 
 go 1.13
 
