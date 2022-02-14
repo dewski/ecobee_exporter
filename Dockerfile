@@ -10,4 +10,4 @@ FROM golang:1.13
 COPY --from=builder /promobee .
 EXPOSE 8080
 VOLUME ["/var/run/promobee"]
-ENTRYPOINT [ "./promobee", "--store", "/var/run/promobee/promobee.store", "--api_key" ]
+ENTRYPOINT [ "./promobee", "--store", "/var/run/promobee/promobee.store"]
